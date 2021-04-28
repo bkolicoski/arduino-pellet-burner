@@ -2,21 +2,32 @@
 #include <RtcDS1302.h>
 #include <Wire.h> 
 #include <LiquidCrystal_I2C.h>
+//#define ENCODER_OPTIMIZE_INTERRUPTS
+#include <Encoder.h>
 
-ThreeWire myWire(D4,D5,D3); // DAT, CLK, RST
+ThreeWire myWire(8,7,9); // DAT, CLK, RST
 RtcDS1302<ThreeWire> Rtc(myWire);
 LiquidCrystal_I2C lcd(0x27,20,4);
+Encoder myEnc(3, 4);
 String timeStr = "";
+long oldPosition  = -999;
 
 void setup() {
-  Serial.begin(9600);
-  Wire.begin(D1, D2);
+  Serial.begin(115200);
+  //Wire.begin(D1, D2);
   initScreen();
   initTime();
   delay(2000);
 }
 
 void loop() {
+  long newPosition = myEnc.read();
+  if (newPosition != oldPosition && newPosition % 2 == 0) {
+    oldPosition = newPosition;
+    Serial.println(newPosition);
+    printPosition(newPosition / 2);
+  }
+  
   RtcDateTime now = Rtc.GetDateTime();
 
   timeStr = returnDateTime(now);
@@ -30,7 +41,7 @@ void loop() {
       Serial.println("RTC lost confidence in the DateTime!");
   }
 
-  delay(1000);
+  delay(10);
 }
 
 void initScreen() {
@@ -90,6 +101,22 @@ void initTime() {
   else if (now == compiled) 
   {
     Serial.println("RTC is the same as compile time! (not expected but all is fine)");
+  }
+}
+
+void printPosition(long pos) {
+  clearLCDLine(1);
+  lcd.setCursor(0,1);
+  lcd.print("Position: ");
+  lcd.print(pos);
+}
+
+void clearLCDLine(int line)
+{               
+  lcd.setCursor(0,line);
+  for(int n = 0; n < 20; n++) // 20 indicates symbols in line. For 2x16 LCD write - 16
+  {
+    lcd.print(" ");
   }
 }
 

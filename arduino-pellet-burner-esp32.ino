@@ -86,6 +86,8 @@ String screens[numOfScreens][3] = {
 };
 int parameters[numOfScreens];
 bool updateScreen = true;
+bool updateStatus = true;
+bool updateTime = false;
 
 void setup() {
   //TODO: Add check for existing settings and load from memory
@@ -122,14 +124,18 @@ void loop() {
       } else {
         parameters[currentScreen]--;
       }
+      if(currentScreen >= TIME_YEAR) {
+        updateTime = true;
+      }
       //reset menu trigger time on parameter change
       menuTriggeredTime = millis();
+      updateScreen = true;
     } else {
       //update operating temperature
       if(newPosition > oldPosition) {
-        parameters[0]++;
+        parameters[TARGET_T]++;
       } else if(newPosition < oldPosition){
-        parameters[0]--;
+        parameters[TARGET_T]--;
       }
       printOperatingTemperature();
     }
@@ -154,7 +160,7 @@ void loop() {
     }
   } else {
     //no clicking, handle other logic
-    updateTime(returnDateTime(now));
+    updateScreenTime(now);
     if (!now.IsValid())
     {
       // Common Causes:
@@ -171,11 +177,13 @@ void loop() {
   }
 
   resolveStatusState();
-
   resolveHeaterState();
-  if(updateScreen) {
+  resolvePumpState();
+  resolveFeedState();
+
+  if(updateStatus) {
     updateLCDStatus();
-    updateScreen = false;
+    updateStatus = false;
   }
 
   delay(10);
@@ -214,6 +222,39 @@ void resolveHeaterState() {
     digitalWrite(HEATER_PIN, LOW);
   } else {
     digitalWrite(HEATER_PIN, HIGH);
+  }
+}
+
+void resolvePumpState() {
+  if(tmp_water >= parameters[PUMP_T]) {
+    //activate
+    digitalWrite(PUMP_PIN, LOW);
+  } else if (tmp_water < parameters[PUMP_T] - 2) {
+    digitalWrite(PUMP_PIN, HIGH);
+  }
+}
+
+void resolveFeedState() {
+  if(status == "ignition") {
+    //load start dose 
+    
+    if(ignitionStartTime + parameters[START_DOSE] <= now) {
+      //still in start dose
+      digitalWrite(FEED_PIN, LOW);
+      Serial.println("ON");
+    } else {
+      //past start dose
+      digitalWrite(FEED_PIN, HIGH);
+      Serial.println("OFF");
+    }
+  } else if(status == "stabilization") {
+    //add stabilization dose
+  } else if(status == "heating") {
+    //add stabilization dose
+  } else {
+    //turn off feed in any other case
+    digitalWrite(FEED_PIN, HIGH);
+    Serial.println("OFF 2");
   }
 }
 
@@ -307,6 +348,12 @@ void initTime() {
   {
     Serial.println("RTC is the same as compile time! (not expected but all is fine)");
   }
+  //update parameters with date/time
+  parameters[TIME_YEAR] = now.Year();
+  parameters[TIME_MONTH] = now.Month();
+  parameters[TIME_DAY] = now.Day();
+  parameters[TIME_HOUR] = now.Hour();
+  parameters[TIME_MINUTE] = now.Minute();
 }
 
 void printOperatingTemperature() {
@@ -342,7 +389,13 @@ void clearLCDLine(int line) {
   }
 }
 
-void updateTime(String tStr) {
+void updateScreenTime(RtcDateTime time) {
+  if(updateTime) {
+    time = RtcDateTime(parameters[TIME_YEAR], parameters[TIME_MONTH], parameters[TIME_DAY], parameters[TIME_HOUR], parameters[TIME_MINUTE], 0);
+    rtc.SetDateTime(time);
+    updateTime = false;
+  }
+  String tStr = returnDateTime(time);
   if (timeStr != tStr) {
     lcd.setCursor(0, 0);
     lcd.print(tStr);
@@ -357,8 +410,8 @@ String returnDateTime(const RtcDateTime& dt) {
   snprintf_P(datestring,
              countof(datestring),
              PSTR("%02u/%02u/%04u  %02u:%02u:%02u"),
-             dt.Month(),
              dt.Day(),
+             dt.Month(),
              dt.Year(),
              dt.Hour(),
              dt.Minute(),
@@ -378,6 +431,7 @@ void handleButtonChange()
         shutdownStartTime = now;
         status = "shutdown";
       }
+      updateStatus = true;
     } else {
       menuTriggeredTime = millis();
       currentScreen++;
@@ -385,14 +439,15 @@ void handleButtonChange()
         currentScreen = 0;
       }
     }
-    updateScreen = true;
   } else {
     //push
     if (menuTriggeredTime == 0) {
+      currentScreen = -1;
       initPosition = oldPosition;
     }
     menuTriggeredTime = millis();
   }
+  updateScreen = true;
 }
 
 void displaySettingsMenu() {

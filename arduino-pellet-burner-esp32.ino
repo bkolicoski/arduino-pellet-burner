@@ -11,7 +11,7 @@ LiquidCrystal_I2C lcd(0x27, 20, 4);
 Encoder myEnc(5, 18);
 
 #define SWITCH_PIN 19
-#define FEED_PIN 23
+#define FEED_PIN 33
 #define PUMP_PIN 25
 #define HEATER_PIN 26
 
@@ -48,6 +48,9 @@ Encoder myEnc(5, 18);
 #define TIME_DAY          20
 #define TIME_HOUR         21
 #define TIME_MINUTE       22
+#define TMP_ADJ           23
+
+int duty_period = 10;
 
 int tmp_water = 20;
 int tmp_water_old = 0;
@@ -56,8 +59,8 @@ String status = "stand-by";
 long oldPosition  = 0;
 long initPosition = -999;
 unsigned long menuTriggeredTime = 0;
-RtcDateTime now, ignitionStartTime, shutdownStartTime;
-const int numOfScreens = 23;
+RtcDateTime now, ignitionStartTime, shutdownStartTime, lastDoseActionTime;
+const int numOfScreens = 24;
 int currentScreen = -1;
 String screens[numOfScreens][3] = {
   {"Target tmp.", "Celsius", "50"}, //TARGET_T
@@ -77,12 +80,13 @@ String screens[numOfScreens][3] = {
   {"Cut-off tmp.", "Celsius", "80"}, //CUT_OFF_T
   {"Smoke tmp. min.", "Celsius", "42"}, //SMOKE_MIN_T
   {"Smoke tmp. max.", "Celsius", "150"}, //SMOKE_MAX_T
-  {"Pump tmp.", "Celsius", "30"}, //PUMP_T
+  {"Pump tmp.", "Celsius", "40"}, //PUMP_T
   {"Year", "", "2021"}, //TIME_YEAR
   {"Month", "", "1"}, //TIME_MONTH
   {"Day", "", "1"}, //TIME_DAY
   {"Hour", "", "0"}, //TIME_HOUR
   {"Minute", "", "0"}, //TIME_MINUTE
+  {"Tmp. Adjust", "Celsius", "-5"}, //TMP_ADJ
 };
 int parameters[numOfScreens];
 bool updateScreen = true;
@@ -194,6 +198,7 @@ void resolveStatusState() {
     //TODO: Add proper settings delay check for ignition time instead of 30
     if(ignitionStartTime + 30 < now) {
       //TODO: Add exaust temperature check to confirm flame
+      lastDoseActionTime = NULL;
       status = "stabilization";
       updateLCDStatus();
     }
@@ -201,6 +206,7 @@ void resolveStatusState() {
     //TODO: Add proper delay for ignition + stabilization time
     if(ignitionStartTime + 60 < now) {
       status = "heating";
+      lastDoseActionTime = NULL;
       updateLCDStatus();
     }
   } else if(status == "shutdown") {
@@ -236,25 +242,44 @@ void resolvePumpState() {
 
 void resolveFeedState() {
   if(status == "ignition") {
-    //load start dose 
-    
+    //load start dose   
     if(ignitionStartTime + parameters[START_DOSE] <= now) {
       //still in start dose
       digitalWrite(FEED_PIN, LOW);
-      Serial.println("ON");
     } else {
       //past start dose
       digitalWrite(FEED_PIN, HIGH);
-      Serial.println("OFF");
     }
   } else if(status == "stabilization") {
-    //add stabilization dose
+    cyclePinPerDuty(FEED_PIN, getPeriodDelay(parameters[STABILIZIE_DOSE]));
   } else if(status == "heating") {
-    //add stabilization dose
+    //TODO: Add different power levels handling
+    cyclePinPerDuty(FEED_PIN, getPeriodDelay(parameters[P3_DOSE]));
   } else {
     //turn off feed in any other case
     digitalWrite(FEED_PIN, HIGH);
-    Serial.println("OFF 2");
+  }
+}
+
+int getPeriodDelay(int duty_percent) {
+  return round(duty_percent / duty_period);
+}
+
+void cyclePinPerDuty(int pin, int period) {
+  if(lastDoseActionTime == NULL) {
+    //stabilization first start, init stabilization dose
+    //STABILIZIE_DOSE
+    lastDoseActionTime = now;
+    digitalWrite(pin, LOW);
+  } else {
+    if(lastDoseActionTime + period > now) {
+      digitalWrite(pin, LOW);
+    } else if (lastDoseActionTime + duty_period > now) {
+      digitalWrite(pin, HIGH);
+    } else {
+      //reset period
+      lastDoseActionTime = NULL;
+    }
   }
 }
 
@@ -288,8 +313,7 @@ int measureTemperature(int pinNumber) {
   steinhart = 1.0 / steinhart;                 // Invert
   steinhart -= 273.15;                         // convert to C
 
-  return round(steinhart);
-  //TODO: Add temperature offset for adjustment
+  return round(steinhart + parameters[TMP_ADJ]);
 }
 
 void initScreen() {
